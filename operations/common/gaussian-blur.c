@@ -418,63 +418,11 @@ static void prepare (GeglOperation *operation)
 #include "opencl/gegl-cl.h"
 #include "buffer/gegl-buffer-cl-iterator.h"
 
-static const char* kernel_source =
-"float4 fir_get_mean_component_1D_CL(const global float4 *buf,     \n"
-"                                    int offset,                   \n"
-"                                    const int delta_offset,       \n"
-"                                    constant float *cmatrix,      \n"
-"                                    const int matrix_length)      \n"
-"{                                                                 \n"
-"    float4 acc = 0.0f;                                            \n"
-"    int i;                                                        \n"
-"                                                                  \n"
-"    for(i=0; i<matrix_length; i++)                                \n"
-"      {                                                           \n"
-"        acc    += buf[offset] * cmatrix[i];                       \n"
-"        offset += delta_offset;                                   \n"
-"      }                                                           \n"
-"    return acc;                                                   \n"
-"}                                                                 \n"
-"                                                                  \n"
-"__kernel void fir_ver_blur_CL(const global float4 *src_buf,       \n"
-"                              const int src_width,                \n"
-"                              global float4 *dst_buf,             \n"
-"                              constant float *cmatrix,            \n"
-"                              const int matrix_length,            \n"
-"                              const int yoff)                     \n"
-"{                                                                 \n"
-"    int gidx = get_global_id(0);                                  \n"
-"    int gidy = get_global_id(1);                                  \n"
-"    int gid  = gidx + gidy * get_global_size(0);                  \n"
-"                                                                  \n"
-"    int radius = matrix_length / 2;                               \n"
-"    int src_offset = gidx + (gidy - radius + yoff) * src_width;   \n"
-"                                                                  \n"
-"    dst_buf[gid] = fir_get_mean_component_1D_CL(                  \n"
-"        src_buf, src_offset, src_width, cmatrix, matrix_length);  \n"
-"}                                                                 \n"
-"                                                                  \n"
-"__kernel void fir_hor_blur_CL(const global float4 *src_buf,       \n"
-"                              const int src_width,                \n"
-"                              global float4 *dst_buf,             \n"
-"                              constant float *cmatrix,            \n"
-"                              const int matrix_length,            \n"
-"                              const int yoff)                     \n"
-"{                                                                 \n"
-"    int gidx = get_global_id(0);                                  \n"
-"    int gidy = get_global_id(1);                                  \n"
-"    int gid  = gidx + gidy * get_global_size(0);                  \n"
-"                                                                  \n"
-"    int radius = matrix_length / 2;                               \n"
-"    int src_offset = gidy * src_width + (gidx - radius + yoff);   \n"
-"                                                                  \n"
-"    dst_buf[gid] = fir_get_mean_component_1D_CL(                  \n"
-"        src_buf, src_offset, 1, cmatrix, matrix_length);          \n"
-"}                                                                 \n";
+#include "opencl/gaussian-blur.cl.h"
 
 static GeglClRunData *cl_data = NULL;
 
-static cl_int
+static gboolean
 cl_gaussian_blur (cl_mem                in_tex,
                   cl_mem                out_tex,
                   cl_mem                aux_tex,
@@ -497,75 +445,81 @@ cl_gaussian_blur (cl_mem                in_tex,
 
   if (!cl_data)
     {
-      const char *kernel_name[] = {"fir_ver_blur_CL", "fir_hor_blur_CL", NULL};
-      cl_data = gegl_cl_compile_and_build (kernel_source, kernel_name);
+      const char *kernel_name[] = {"fir_ver_blur", "fir_hor_blur", NULL};
+      cl_data = gegl_cl_compile_and_build (gaussian_blur_cl_source, kernel_name);
     }
-  if (!cl_data) return 1;
+  if (!cl_data) return TRUE;
 
   cl_matrix_x = gegl_clCreateBuffer(gegl_cl_get_context(),
-                                    CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_ONLY,
-                                    matrix_length_x * sizeof(cl_float), NULL, &cl_err);
-  if (cl_err != CL_SUCCESS) return cl_err;
-
-  cl_err = gegl_clEnqueueWriteBuffer(gegl_cl_get_command_queue(), cl_matrix_x,
-                                     CL_TRUE, 0, matrix_length_x * sizeof(cl_float), dmatrix_x,
-                                     0, NULL, NULL);
-  if (cl_err != CL_SUCCESS) return cl_err;
+                                    CL_MEM_USE_HOST_PTR | CL_MEM_READ_ONLY,
+                                    matrix_length_x * sizeof(cl_float), dmatrix_x, &cl_err);
+  CL_CHECK;
 
   cl_matrix_y = gegl_clCreateBuffer(gegl_cl_get_context(),
-                                    CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_ONLY,
-                                    matrix_length_y * sizeof(cl_float), NULL, &cl_err);
-  if (cl_err != CL_SUCCESS) return cl_err;
-
-  cl_err = gegl_clEnqueueWriteBuffer(gegl_cl_get_command_queue(), cl_matrix_y,
-                                     CL_TRUE, 0, matrix_length_y * sizeof(cl_float), dmatrix_y,
-                                     0, NULL, NULL);
-  if (cl_err != CL_SUCCESS) return cl_err;
+                                    CL_MEM_USE_HOST_PTR | CL_MEM_READ_ONLY,
+                                    matrix_length_y * sizeof(cl_float), dmatrix_y, &cl_err);
+  CL_CHECK;
 
   {
   global_ws[0] = aux_rect->width;
   global_ws[1] = aux_rect->height;
 
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 0, sizeof(cl_mem), (void*)&in_tex);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 1, sizeof(cl_int), (void*)&src_rect->width);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 2, sizeof(cl_mem), (void*)&aux_tex);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 3, sizeof(cl_mem), (void*)&cl_matrix_x);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 4, sizeof(cl_int), (void*)&matrix_length_x);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 5, sizeof(cl_int), (void*)&xoff);
-  if (cl_err != CL_SUCCESS) return cl_err;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[1], 0, sizeof(cl_mem), (void*)&in_tex);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[1], 1, sizeof(cl_int), (void*)&src_rect->width);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[1], 2, sizeof(cl_mem), (void*)&aux_tex);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[1], 3, sizeof(cl_mem), (void*)&cl_matrix_x);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[1], 4, sizeof(cl_int), (void*)&matrix_length_x);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[1], 5, sizeof(cl_int), (void*)&xoff);
+  CL_CHECK;
 
   cl_err = gegl_clEnqueueNDRangeKernel(gegl_cl_get_command_queue (),
                                        cl_data->kernel[1], 2,
                                        NULL, global_ws, NULL,
                                        0, NULL, NULL);
-  if (cl_err != CL_SUCCESS) return cl_err;
+  CL_CHECK;
   }
 
   {
   global_ws[0] = roi->width;
   global_ws[1] = roi->height;
 
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 0, sizeof(cl_mem), (void*)&aux_tex);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 1, sizeof(cl_int), (void*)&aux_rect->width);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 2, sizeof(cl_mem), (void*)&out_tex);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 3, sizeof(cl_mem), (void*)&cl_matrix_y);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 4, sizeof(cl_int), (void*)&matrix_length_y);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 5, sizeof(cl_int), (void*)&yoff);
-  if (cl_err != CL_SUCCESS) return cl_err;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 0, sizeof(cl_mem), (void*)&aux_tex);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 1, sizeof(cl_int), (void*)&aux_rect->width);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 2, sizeof(cl_mem), (void*)&out_tex);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 3, sizeof(cl_mem), (void*)&cl_matrix_y);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 4, sizeof(cl_int), (void*)&matrix_length_y);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 5, sizeof(cl_int), (void*)&yoff);
+  CL_CHECK;
 
   cl_err = gegl_clEnqueueNDRangeKernel(gegl_cl_get_command_queue (),
                                        cl_data->kernel[0], 2,
                                        NULL, global_ws, NULL,
                                        0, NULL, NULL);
-  if (cl_err != CL_SUCCESS) return cl_err;
+  CL_CHECK;
   }
 
-  gegl_clFinish(gegl_cl_get_command_queue ());
+  cl_err = gegl_clFinish(gegl_cl_get_command_queue ());
+  CL_CHECK;
 
-  gegl_clReleaseMemObject(cl_matrix_x);
-  gegl_clReleaseMemObject(cl_matrix_y);
+  cl_err = gegl_clReleaseMemObject(cl_matrix_x);
+  CL_CHECK;
+  cl_err = gegl_clReleaseMemObject(cl_matrix_y);
+  CL_CHECK;
 
-  return CL_SUCCESS;
+  return FALSE;
+
+error:
+  return TRUE;
 }
 
 static gboolean
@@ -601,7 +555,7 @@ cl_process (GeglOperation       *operation,
     fmatrix_y[j] = (gfloat) cmatrix_y[j];
 
   {
-  GeglBufferClIterator *i = gegl_buffer_cl_iterator_new (output, result, out_format, GEGL_CL_BUFFER_WRITE, GEGL_ABYSS_NONE);
+  GeglBufferClIterator *i = gegl_buffer_cl_iterator_new (output, result, out_format, GEGL_CL_BUFFER_WRITE);
   gint read = gegl_buffer_cl_iterator_add_2 (i, input, result, in_format, GEGL_CL_BUFFER_READ,
                                              op_area->left, op_area->right, op_area->top, op_area->bottom, GEGL_ABYSS_NONE);
   gint aux  = gegl_buffer_cl_iterator_add_2 (i, NULL, result, in_format,  GEGL_CL_BUFFER_AUX,
@@ -612,22 +566,22 @@ cl_process (GeglOperation       *operation,
       if (err) return FALSE;
       for (j=0; j < i->n; j++)
         {
-           cl_err = cl_gaussian_blur(i->tex[read][j],
-                                     i->tex[0][j],
-                                     i->tex[aux][j],
-                                     i->size[0][j],
-                                     &i->roi[0][j],
-                                     &i->roi[read][j],
-                                     &i->roi[aux][j],
-                                     fmatrix_x,
-                                     cmatrix_len_x,
-                                     op_area->left,
-                                     fmatrix_y,
-                                     cmatrix_len_y,
-                                     op_area->top);
-          if (cl_err != CL_SUCCESS)
+           err = cl_gaussian_blur(i->tex[read][j],
+                                  i->tex[0][j],
+                                  i->tex[aux][j],
+                                  i->size[0][j],
+                                  &i->roi[0][j],
+                                  &i->roi[read][j],
+                                  &i->roi[aux][j],
+                                  fmatrix_x,
+                                  cmatrix_len_x,
+                                  op_area->left,
+                                  fmatrix_y,
+                                  cmatrix_len_y,
+                                  op_area->top);
+          if (err)
             {
-              g_warning("[OpenCL] Error in gegl:gaussian-blur: %s", gegl_cl_errstring(cl_err));
+              g_warning("[OpenCL] Error in gegl:gaussian-blur");
               return FALSE;
             }
         }

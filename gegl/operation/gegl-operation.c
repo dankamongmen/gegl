@@ -95,7 +95,7 @@ gegl_operation_class_init (GeglOperationClass *klass)
 }
 
 static void
-gegl_operation_base_init  (GeglOperationClass *klass)
+gegl_operation_base_init (GeglOperationClass *klass)
 {
   /* XXX: leaked for now, should replace G_DEFINE_TYPE with the expanded one */
   klass->keys = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
@@ -181,7 +181,7 @@ gegl_operation_get_bounding_box (GeglOperation *self)
 }
 
 GeglRectangle
-gegl_operation_get_invalidated_by_change (GeglOperation        *self,
+gegl_operation_get_invalidated_by_change (GeglOperation       *self,
                                           const gchar         *input_pad,
                                           const GeglRectangle *input_region)
 {
@@ -333,7 +333,7 @@ gegl_operation_get_source_node (GeglOperation *operation,
 }
 
 GeglRectangle *
-gegl_operation_source_get_bounding_box (GeglOperation  *operation,
+gegl_operation_source_get_bounding_box (GeglOperation *operation,
                                         const gchar   *input_pad_name)
 {
   GeglNode *node = gegl_operation_get_source_node (operation, input_pad_name);
@@ -341,9 +341,9 @@ gegl_operation_source_get_bounding_box (GeglOperation  *operation,
   if (node)
     {
       GeglRectangle *ret;
-      g_mutex_lock (node->mutex);
+      g_mutex_lock (&node->mutex);
       ret = &node->have_rect;
-      g_mutex_unlock (node->mutex);
+      g_mutex_unlock (&node->mutex);
       return ret;
     }
 
@@ -719,4 +719,20 @@ gegl_operation_get_key (const gchar *operation_name,
   ret = gegl_operation_class_get_key (GEGL_OPERATION_CLASS (klass), key_name);
   g_type_class_unref (klass);
   return ret;
+}
+
+const Babl *
+gegl_operation_get_source_format (GeglOperation *operation,
+                                  const gchar   *padname)
+{
+  GeglNode *src_node = gegl_operation_get_source_node (operation, padname);
+
+  if (src_node)
+    {
+      GeglOperation *op = src_node->operation;
+      if (op)
+        return gegl_operation_get_format (op, "output");
+            /* XXX: could be a different pad than "output" */
+    }
+  return NULL;
 }

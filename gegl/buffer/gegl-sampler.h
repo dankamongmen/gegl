@@ -31,7 +31,18 @@ G_BEGIN_DECLS
 #define GEGL_IS_SAMPLER(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GEGL_TYPE_SAMPLER))
 #define GEGL_IS_SAMPLER_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  GEGL_TYPE_SAMPLER))
 #define GEGL_SAMPLER_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  GEGL_TYPE_SAMPLER, GeglSamplerClass))
-#define GEGL_SAMPLER_MIPMAP_LEVELS   3
+
+/*
+ * This should be set to the largest number of mipmap levels (counted
+ * starting at 0 = no box filtering) actually used by any sampler.
+ */
+#define GEGL_SAMPLER_MIPMAP_LEVELS (8)
+/*
+ * Best thing to do seems to use rectangular buffer tiles that are
+ * twice as wide as they are tall.
+ */
+#define GEGL_SAMPLER_MAXIMUM_HEIGHT (64)
+#define GEGL_SAMPLER_MAXIMUM_WIDTH (GEGL_SAMPLER_MAXIMUM_HEIGHT)
 
 typedef struct _GeglSamplerClass GeglSamplerClass;
 

@@ -4,6 +4,7 @@ bin/gegl-options.c
 gegl/gegl-init.c
 gegl/module/geglmodule.c
 operations/common/bilateral-filter.c
+operations/common/bilateral-filter-fast.c
 operations/common/box-blur.c
 operations/common/brightness-contrast.c
 operations/common/buffer-sink.c
@@ -23,6 +24,7 @@ operations/common/dropshadow.c
 operations/common/edge-laplace.c
 operations/common/edge-sobel.c
 operations/common/exp-combine.c
+operations/common/exposure.c
 operations/common/fattal02.c
 operations/common/fractal-explorer.c
 operations/common/gaussian-blur.c

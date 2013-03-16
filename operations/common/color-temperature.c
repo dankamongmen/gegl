@@ -172,25 +172,12 @@ process (GeglOperation       *op,
 }
 
 #include "opencl/gegl-cl.h"
-
-static const char* kernel_source =
-"__kernel void kernel_temp(__global const float4     *in,       \n"
-"                          __global       float4     *out,      \n"
-"                          float coeff1,                        \n"
-"                          float coeff2,                        \n"
-"                          float coeff3)                        \n"
-"{                                                              \n"
-"  int gid = get_global_id(0);                                  \n"
-"  float4 in_v  = in[gid];                                      \n"
-"  float4 out_v;                                                \n"
-"  out_v = in_v * (float4) (coeff1, coeff2, coeff3, 1.0f);      \n"
-"  out[gid]  =  out_v;                                          \n"
-"}                                                              \n";
+#include "opencl/color-temperature.cl.h"
 
 static GeglClRunData *cl_data = NULL;
 
 /* OpenCL processing function */
-static cl_int
+static gboolean
 cl_process (GeglOperation       *op,
             cl_mem               in_tex,
             cl_mem               out_tex,
@@ -214,26 +201,33 @@ cl_process (GeglOperation       *op,
 
   if (!cl_data)
     {
-      const char *kernel_name[] = {"kernel_temp", NULL};
-      cl_data = gegl_cl_compile_and_build (kernel_source, kernel_name);
+      const char *kernel_name[] = {"gegl_color_temperature", NULL};
+      cl_data = gegl_cl_compile_and_build (color_temperature_cl_source, kernel_name);
     }
 
   if (!cl_data) return 1;
 
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 0, sizeof(cl_mem),    (void*)&in_tex);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 1, sizeof(cl_mem),    (void*)&out_tex);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 2, sizeof(cl_float),  (void*)&coeffs[0]);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 3, sizeof(cl_float),  (void*)&coeffs[1]);
-  cl_err |= gegl_clSetKernelArg(cl_data->kernel[0], 4, sizeof(cl_float),  (void*)&coeffs[2]);
-  if (cl_err != CL_SUCCESS) return cl_err;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 0, sizeof(cl_mem),    (void*)&in_tex);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 1, sizeof(cl_mem),    (void*)&out_tex);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 2, sizeof(cl_float),  (void*)&coeffs[0]);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 3, sizeof(cl_float),  (void*)&coeffs[1]);
+  CL_CHECK;
+  cl_err = gegl_clSetKernelArg(cl_data->kernel[0], 4, sizeof(cl_float),  (void*)&coeffs[2]);
+  CL_CHECK;
 
   cl_err = gegl_clEnqueueNDRangeKernel(gegl_cl_get_command_queue (),
                                         cl_data->kernel[0], 1,
                                         NULL, &global_worksize, NULL,
                                         0, NULL, NULL);
-  if (cl_err != CL_SUCCESS) return cl_err;
+  CL_CHECK;
 
-  return cl_err;
+  return FALSE;
+
+error:
+  return TRUE;
 }
 
 

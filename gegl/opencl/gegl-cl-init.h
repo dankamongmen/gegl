@@ -27,6 +27,8 @@ gboolean          gegl_cl_init (GError **error);
 
 gboolean          gegl_cl_is_accelerated (void);
 
+void              gegl_cl_disable (void);
+
 cl_platform_id    gegl_cl_get_platform (void);
 
 cl_device_id      gegl_cl_get_device (void);
@@ -77,6 +79,7 @@ t_clEnqueueReadBufferRect   gegl_clEnqueueReadBufferRect   = NULL;
 t_clEnqueueWriteBufferRect  gegl_clEnqueueWriteBufferRect  = NULL;
 t_clEnqueueCopyBufferRect   gegl_clEnqueueCopyBufferRect   = NULL;
 t_clCreateImage2D           gegl_clCreateImage2D           = NULL;
+t_clCreateImage3D           gegl_clCreateImage3D           = NULL;
 t_clEnqueueWriteImage       gegl_clEnqueueWriteImage       = NULL;
 t_clEnqueueReadImage        gegl_clEnqueueReadImage        = NULL;
 t_clEnqueueCopyImage        gegl_clEnqueueCopyImage        = NULL;
@@ -119,6 +122,7 @@ extern t_clEnqueueReadBufferRect   gegl_clEnqueueReadBufferRect;
 extern t_clEnqueueWriteBufferRect  gegl_clEnqueueWriteBufferRect;
 extern t_clEnqueueCopyBufferRect   gegl_clEnqueueCopyBufferRect;
 extern t_clCreateImage2D           gegl_clCreateImage2D;
+extern t_clCreateImage3D           gegl_clCreateImage3D;
 extern t_clEnqueueWriteImage       gegl_clEnqueueWriteImage;
 extern t_clEnqueueReadImage        gegl_clEnqueueReadImage;
 extern t_clEnqueueCopyImage        gegl_clEnqueueCopyImage;

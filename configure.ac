@@ -40,7 +40,7 @@ m4_define([gimp_full_name], [Generic Graphical Library])
 m4_define([babl_required_version], [0.1.10])
 m4_define([cairo_required_version], [0.0.0])
 m4_define([gdk_pixbuf_required_version], [2.18.0])
-m4_define([glib_required_version], [2.28.0])
+m4_define([glib_required_version], [2.32.4])
 m4_define([graphviz_required_version], [0.0.0])
 m4_define([jasper_required_version], [1.900.1])
 m4_define([lensfun_required_version], [0.2.5])
@@ -490,18 +490,6 @@ m4_ifdef([IT_PROG_INTLTOOL],[IT_PROG_INTLTOOL(0.40.1),],
 
 AM_GLIB_GNU_GETTEXT
 
-#########################
-# Disable deprecated APIs
-#########################
-
-AC_MSG_CHECKING([if GLib is version 2.21.0 or newer])
-if $PKG_CONFIG --atleast-version=2.21.0 glib-2.0; then
-  have_glib_2_21=yes
-else
-  have_glib_2_21=no
-fi
-AC_MSG_RESULT($have_glib_2_21)
-
 
 ######################################
 # Checks for gtk-doc and docbook-tools
@@ -886,7 +874,7 @@ AC_SUBST(LUA_LIBS)
 AC_ARG_WITH(libavformat,  [  --without-libavformat   build without libavformat support])
 
 if test "x$with_libavformat" != xno; then
-  PKG_CHECK_MODULES(AVFORMAT, libavformat libavcodec,
+  PKG_CHECK_MODULES(AVFORMAT, libavformat >= 53.0.0 libavcodec >= 53.0.0,
     have_libavformat="yes",
     have_libavformat="no  (libavformat not found)")
   # verify the presence of the avformat.h header
@@ -1128,6 +1116,7 @@ tests/xml/Makefile
 tests/xml/data/Makefile
 po/Makefile.in
 gegl-uninstalled.pc
+opencl/Makefile
 ])
 
 # Files with versions in their names

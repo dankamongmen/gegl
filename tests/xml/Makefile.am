@@ -2,9 +2,15 @@ SUBDIRS = data
 
 # Make the tests run against the build and not the installation
 TESTS_ENVIRONMENT = \
-	GEGL_PATH=$(top_builddir)/operations/ \
-	ABS_TOP_BUILDDIR=$(top_builddir) \
-	ABS_TOP_SRCDIR=$(top_srcdir) gtester -k --verbose
+	export GEGL_PATH=$(top_builddir)/operations/;\
+	export ABS_TOP_BUILDDIR=$(top_builddir); \
+	export ABS_TOP_SRCDIR=$(top_srcdir) ;
+
+LOG_COMPILER = \
+	gtester
+
+AM_LOG_FLAGS = \
+	-k --verbose
 
 # The tests
 noinst_PROGRAMS = \

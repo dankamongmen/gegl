@@ -92,9 +92,11 @@ guint gegl_debug_flags = 0;
 #include "operation/gegl-operations.h"
 #include "operation/gegl-extension-handler.h"
 #include "buffer/gegl-buffer-private.h"
+#include "buffer/gegl-tile-backend-ram.h"
+#include "buffer/gegl-tile-backend-tiledir.h"
+#include "buffer/gegl-tile-backend-file.h"
 #include "gegl-config.h"
 #include "graph/gegl-node.h"
-
 
 /* if this function is made to return NULL swapping is disabled */
 const gchar *
@@ -109,7 +111,13 @@ gegl_swap_dir (void)
           if (g_str_equal (g_getenv ("GEGL_SWAP"), "RAM"))
             swapdir = NULL;
           else
-            swapdir = g_strdup (g_getenv ("GEGL_SWAP"));
+            {
+              swapdir = g_strstrip (g_strdup (g_getenv ("GEGL_SWAP")));
+
+              /* Remove any trailing separator, unless the path is only made of a leading separator. */
+              while (strlen (swapdir) > strlen (G_DIR_SEPARATOR_S) && g_str_has_suffix (swapdir, G_DIR_SEPARATOR_S))
+                swapdir[strlen (swapdir) - strlen (G_DIR_SEPARATOR_S)] = '\0';
+            }
         }
       else
         {
@@ -132,6 +140,7 @@ gegl_swap_dir (void)
           g_free (name);
 #endif
 
+          g_free (swapdir);
           swapdir = NULL;
         }
     }
@@ -305,11 +314,6 @@ GeglConfig *gegl_config (void)
   return GEGL_CONFIG (config);
 }
 
-void gegl_tile_backend_ram_stats (void);
-void gegl_tile_backend_tiledir_stats (void);
-void gegl_tile_backend_file_stats (void);
-
-
 static void swap_clean (void)
 {
   const gchar  *swap_dir = gegl_swap_dir ();
@@ -452,6 +456,13 @@ gegl_get_version (int *major,
     *micro = GEGL_MICRO_VERSION;
 }
 
+void
+gegl_load_module_directory (const gchar *path)
+{
+  g_return_if_fail (g_file_test (path, G_FILE_TEST_IS_DIR));
+
+  gegl_module_db_load (module_db, path);
+}
 
 static gboolean
 gegl_post_parse_hook (GOptionContext *context,
@@ -577,7 +588,7 @@ gegl_post_parse_hook (GOptionContext *context,
   gegl_instrument ("gegl", "gegl_init", gegl_ticks () - global_time);
 
   if (g_getenv ("GEGL_SWAP"))
-    g_object_set (config, "swap", g_getenv ("GEGL_SWAP"), NULL);
+    g_object_set (config, "swap", gegl_swap_dir (), NULL);
   if (g_getenv ("GEGL_QUALITY"))
     {
       const gchar *quality = g_getenv ("GEGL_QUALITY");

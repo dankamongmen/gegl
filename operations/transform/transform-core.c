@@ -84,6 +84,8 @@ static GeglNode     *gegl_transform_detect                       (GeglOperation 
 
 static gboolean      gegl_matrix3_is_affine                      (GeglMatrix3          *matrix);
 static gboolean      gegl_transform_matrix3_allow_fast_translate (GeglMatrix3          *matrix);
+static void          gegl_transform_create_composite_matrix      (OpTransform *transform,
+                                                                  GeglMatrix3 *matrix);
 
 /* ************************* */
 
@@ -127,32 +129,23 @@ op_transform_get_type (void)
   return g_define_type_id;
 }
 
-#if 0
-static void
-op_affine_sampler_init (OpTransform *self)
-{
-  GType                 desired_type;
-  GeglInterpolation     interpolation;
-
-  interpolation = gegl_buffer_interpolation_from_string (self->filter);
-  desired_type = gegl_sampler_type_from_interpolation (interpolation);
-
-  if (self->sampler != NULL &&
-      !G_TYPE_CHECK_INSTANCE_TYPE (self->sampler, desired_type))
-    {
-      self->sampler->buffer=NULL;
-      g_object_unref(self->sampler);
-      self->sampler = NULL;
-    }
-
-  self->sampler = op_affine_sampler (self);
-}
-#endif
-
 static void
 gegl_transform_prepare (GeglOperation *operation)
 {
   const Babl *format = babl_format ("RaGaBaA float");
+  GeglMatrix3  matrix;
+  OpTransform *transform = (OpTransform *) operation;
+
+  gegl_transform_create_composite_matrix (transform, &matrix);
+
+  if (gegl_transform_matrix3_allow_fast_translate (&matrix))
+    {
+      const Babl *fmt = gegl_operation_get_source_format (operation, "input");
+
+      if (fmt)
+        format = fmt;
+    }
+
   gegl_operation_set_format (operation, "input", format);
   gegl_operation_set_format (operation, "output", format);
 }
@@ -197,13 +190,10 @@ op_transform_class_init (OpTransformClass *klass)
                                      0.,
                                      G_PARAM_CONSTRUCT | G_PARAM_READWRITE));
   g_object_class_install_property (gobject_class, PROP_FILTER,
-  /*
-   * Lanczos is gone.
-   */
                                    g_param_spec_string (
                                      "filter",
                                      _("Filter"),
-                              _("Filter type (nearest, linear, cubic, lohalo)"),
+                      _("Filter type (nearest, linear, cubic, nohalo, lohalo)"),
                                      "linear",
                                      G_PARAM_CONSTRUCT | G_PARAM_READWRITE));
   g_object_class_install_property (gobject_class, PROP_HARD_EDGES,
@@ -213,6 +203,9 @@ op_transform_class_init (OpTransformClass *klass)
                                      _("Hard edges"),
                                      FALSE,
                                      G_PARAM_CONSTRUCT | G_PARAM_READWRITE));
+  /*
+   * Lanczos is gone. What follows is lint.
+   */
   g_object_class_install_property (gobject_class, PROP_LANCZOS_WIDTH,
                                    g_param_spec_int (
                                      "lanczos-width",
@@ -331,8 +324,6 @@ gegl_transform_bounding_box (const gdouble *points,
                              GeglRectangle *output)
 {
   /*
-   * This function has changed behavior.
-   *
    * Take the points defined by consecutive pairs of gdoubles as
    * absolute positions, that is, positions in the coordinate system
    * with origin at the center of the pixel with index [0][0].
@@ -393,6 +384,8 @@ gegl_transform_bounding_box (const gdouble *points,
    * (gint) 1. This often enlarges result by one pixel at the right
    * and bottom.
    */
+  /* output->width  = (gint) floor ((double) max_x) + ((gint) 1 - output->x); */
+  /* output->height = (gint) floor ((double) max_y) + ((gint) 1 - output->y); */
   output->width  = (gint) ceil ((double) max_x) - output->x;
   output->height = (gint) ceil ((double) max_y) - output->y;
 }
@@ -430,8 +423,8 @@ gegl_transform_is_composite_node (OpTransform *transform)
   GeglOperation *op = GEGL_OPERATION (transform);
   GeglOperation *source;
 
-  connections = gegl_pad_get_connections (gegl_node_get_pad (op->node,
-                                                             "input"));
+  connections = gegl_pad_get_connections (gegl_node_get_pad (op->node,"input"));
+
   if (! connections)
     return FALSE;
 
@@ -465,31 +458,20 @@ gegl_transform_get_bounding_box (GeglOperation *op)
 {
   OpTransform  *transform = OP_TRANSFORM (op);
   GeglMatrix3   matrix;
-
   GeglRectangle in_rect   = {0,0,0,0},
                 have_rect;
   gdouble       have_points [8];
   gint          i;
 
   /*
-   * transform_get_bounding_box has changed behavior.
-   *
-   * It now gets the bounding box of the forward mapped outer input
-   * pixel corners that correspond to the involved indices, where
-   * "bounding" is defined by output pixel areas. The output space
-   * indices of the bounding output pixels is returned.
+   * Gets the bounding box of the forward mapped outer input pixel
+   * corners that correspond to the involved indices, where "bounding"
+   * is defined by output pixel areas. The output space indices of the
+   * bounding output pixels is returned.
    *
    * Note: Don't forget that the boundary between two pixel areas is
    * "owned" by the pixel to the right/bottom.
    */
-
-#if 0
-  /*
-   * See comments below RE: why this is "commented" out.
-   */
-  GeglRectangle  context_rect;
-  GeglSampler   *sampler;
-#endif
 
   if (gegl_operation_source_get_bounding_box (op, "input"))
     in_rect = *gegl_operation_source_get_bounding_box (op, "input");
@@ -503,35 +485,6 @@ gegl_transform_get_bounding_box (GeglOperation *op)
   if (gegl_transform_is_intermediate_node (transform) ||
       gegl_matrix3_is_identity (&matrix))
     return in_rect;
-
-#if 0
-  /*
-   * Commenting out the following (and the corresponding declarations
-   * above) is a major change.
-   *
-   * Motivation: transform_get_bounding_box propagates the in_rect
-   * "forward" into the output. There is no reason why the output
-   * should be enlarged by a sampler's context_rect: What the output
-   * "region" is, and what's needed to produce it, are two separate
-   * issues. It's not because a sampler needs lots of extra data that
-   * the output should be enlarged too.
-   */
-  sampler = gegl_buffer_sampler_new (NULL, babl_format("RaGaBaA float"),
-      gegl_sampler_type_from_string (transform->filter));
-  context_rect = *gegl_sampler_get_context_rect (sampler);
-  g_object_unref (sampler);
-
-  if (!gegl_transform_matrix3_allow_fast_translate (&matrix))
-    {
-      in_rect.x += context_rect.x;
-      in_rect.y += context_rect.y;
-      /*
-       * Does "- (gint) 1" interact badly with {*,*,0,0}?
-       */
-      in_rect.width  += context_rect.width  - (gint) 1;
-      in_rect.height += context_rect.height - (gint) 1;
-    }
-#endif
 
   /*
    * Convert indices to absolute positions of the left and top outer
@@ -575,8 +528,6 @@ gegl_transform_detect (GeglOperation *operation,
   gdouble      need_points [2];
 
   /*
-   * This function has changed behavior.
-   *
    * transform_detect figures out which pixel in the input most
    * closely corresponds to the pixel with index [x][y] in the output.
    * Ties are resolved toward the right and bottom.
@@ -622,13 +573,11 @@ gegl_transform_get_required_for_output (GeglOperation       *op,
   gdouble        need_points [8];
   gint           i;
 
-  /*
-   * This function has changed behavior.
-   */
-
   requested_rect = *region;
-  sampler = gegl_buffer_sampler_new (NULL, babl_format("RaGaBaA float"),
-      gegl_sampler_type_from_string (transform->filter));
+  sampler =
+    gegl_buffer_sampler_new (NULL,
+                             babl_format("RaGaBaA float"),
+                             gegl_sampler_type_from_string (transform->filter));
   context_rect = *gegl_sampler_get_context_rect (sampler);
   g_object_unref (sampler);
 
@@ -778,33 +727,15 @@ transform_affine (GeglBuffer  *dest,
                   GeglSampler *sampler,
                   gint         level)
 {
-  GeglBufferIterator  *i;
-  const GeglRectangle *dest_extent;
-  gint                 x,
-                       y;
-  gfloat * restrict    dest_buf,
-                      *dest_ptr;
-  GeglMatrix3          inverse;
-  GeglMatrix2          inverse_jacobian;
-  gdouble              u_start,
-                       v_start,
-                       u_float,
-                       v_float,
-                       base_u,
-                       base_v;
-  const Babl          *format = babl_format ("RaGaBaA float");
-  gint                 dest_pixels,
-                       flip_x = 0,
-                       flip_y = 0;
+  const Babl  *format = babl_format ("RaGaBaA float");
+  GeglMatrix3  inverse;
+  GeglMatrix2  inverse_jacobian;
+  gint         dest_pixels;
 
   /*
    * XXX: fast paths as existing in files in the same dir as
    *      transform.c should probably be hooked in here, and bailing
    *      out before using the generic code.
-   */
-  /*
-   * Nicolas Robidoux and Massimo Valentini are of the opinion that
-   * fast paths should only be used if absolutely necessary.
    */
   /*
    * It is assumed that the affine transformation has been normalized,
@@ -813,184 +744,174 @@ transform_affine (GeglBuffer  *dest,
    * GEGL_TRANSFORM_CORE_EPSILON).
    */
 
-  g_object_get (dest, "pixels", &dest_pixels, NULL);
-  dest_extent = gegl_buffer_get_extent (dest);
-
-  i = gegl_buffer_iterator_new (dest,
-                                dest_extent,
-                                level,
-                                format,
-                                GEGL_BUFFER_WRITE,
-                                GEGL_ABYSS_NONE);
-
-  /*
-   * This code uses a (novel?) trick by Nicolas Robidoux that
-   * minimizes tile buffer reallocation when affine transformations
-   * "flip" things.
-   *
-   * Explanation:
-   *
-   * GEGL uses square buffer tiles in "output space", which this
-   * function fills with data. Pulling a scanline (within such a
-   * square tile) back to input space (with the inverse
-   * transformation) with an arbitrary affine transformation may make
-   * the scanline go from right to left in input space even though it
-   * goes form left to right in input space. Similarly, a scanline
-   * which is below the first one in output space may be above in
-   * input space. Unfortunately, input buffer tiles (which are square)
-   * are allocated with a bias: less elbow room around the
-   * context_rect (square of data needed by the sampler) is put at the
-   * left and top than at the right and bottom. (Such asymetrical
-   * elbow room is beneficial when resizing, for example, since input
-   * space is then traversed from left to right and top to bottom,
-   * which means that the left and top elbow room is not used in this
-   * situation.) When the affine transformation "flips" things,
-   * however, the elbow room is "on the wrong side", and for this
-   * reason such transformations run much much slower because many
-   * more input buffer tiles get created. One way to make things
-   * better is to traverse the output buffer tile in an appropriate
-   * chosen "reverse order" so that the "short" elbow room is "behind"
-   * instead of "ahead".
-   *
-   * Things are actually a bit more complicated than that. Here is a
-   * terse description of what's actually done, without a full
-   * explanation of why.
-   *
-   * Let's consider a scanline of the output tile which we want to
-   * fill. Pull this scanline back to input space. Assume that we are
-   * using a freshly created input tile. What direction would maximize
-   * the number of pulled back input pixels that we can fit in the
-   * input tile? Because the input tile is square and most of the
-   * extra elbow room is at the bottom and right, the "best" direction
-   * is going down the diagonal of the square, approximately from top
-   * left to bottom right.
-   *
-   * Of course, we do not have control over the actual line traced by
-   * the output scanline in input space. But what the above tells us
-   * is that if the inner product of the pulled back "scanline vector"
-   * with the vector (1,1) (which corresponds to going diagonally from
-   * top-left to bottom-right in images) is negative, we are going
-   * opposite to "best". This can be rectified by filling the output
-   * scanline in reverse order: from right to left in output space.
-   *
-   * Similarly, when one computes the next scanline, one can ask
-   * whether it's the one above or below in output space which is most
-   * likely to "stick out". Repeating the same argument used for a
-   * single scanline, we see that the sign of the inner product of the
-   * inverse image of the vector that points straight down in output
-   * space with the input space vector (1,1) tells us whether we
-   * should fill the output tile from the top down or from the bottom
-   * up.
-   *
-   * Making the "best" happen requires stepping in the "right
-   * direction" both w.r.t. to data pointers and geometrical steps.
-   * In the following code, adjusting the "geometrical steps" so they
-   * go in the right direction is done by modifying the inverse
-   * Jacobian matrix to minimize the number of "geometrical
-   * quantities" floating around. It could be done leaving the
-   * Jacobian matrix alone.
-   */
-
   gegl_matrix3_copy_into (&inverse, matrix);
   gegl_matrix3_invert (&inverse);
 
-  inverse_jacobian.coeff [0][0] = inverse.coeff [0][0];
-  inverse_jacobian.coeff [0][1] = inverse.coeff [0][1];
-  inverse_jacobian.coeff [1][0] = inverse.coeff [1][0];
-  inverse_jacobian.coeff [1][1] = inverse.coeff [1][1];
+  g_object_get (dest, "pixels", &dest_pixels, NULL);
 
-  /*
-   * Set the inverse_jacobian matrix (a.k.a. scale) for samplers that
-   * support it. The inverse jacobian will be "flipped" if the
-   * direction in which the ROI is filled is flipped. Flipping the
-   * inverse jacobian is not necessary for the samplers' sake, but it
-   * makes the following code shorter. Anyway, "sane" use of the
-   * inverse jacobian by a sampler only cares for its effect on sets:
-   * only the image of a centered square with sides aligned with the
-   * coordinate axes, or a centered disc, matters, irrespective of
-   * orientation ("left-hand" VS "right-hand") issues.
-   */
+  {
+    const GeglRectangle *dest_extent = gegl_buffer_get_extent (dest);
+    GeglBufferIterator *i = gegl_buffer_iterator_new (dest,
+                                                      dest_extent,
+                                                      level,
+                                                      format,
+                                                      GEGL_BUFFER_WRITE,
+                                                      GEGL_ABYSS_NONE);
 
-  if (inverse.coeff [0][0] + inverse.coeff [1][0] < (gdouble) 0.0)
-    {
-      /*
-       * Flip the horizontal scan component of the inverse jacobian:
-       */
-      inverse_jacobian.coeff [0][0] = -inverse.coeff [0][0];
-      inverse_jacobian.coeff [1][0] = -inverse.coeff [1][0];
-      /*
-       * Set the flag so we know in which horizontal order we'll be
-       * traversing the ROI with.
-       */
-      flip_x = (gint) 1;
-    }
+    /*
+     * This code uses a (novel?) trick by Nicolas Robidoux that
+     * minimizes tile buffer reallocation when affine transformations
+     * "flip" things.
+     *
+     * Explanation:
+     *
+     * Pulling a scanline (within such a square tile) back to input
+     * space (with the inverse transformation) with an arbitrary
+     * affine transformation may make the scanline go from right to
+     * left in input space even though it goes form left to right in
+     * input space. Similarly, a scanline which is below the first one
+     * in output space may be above in input space. Unfortunately,
+     * input buffer tiles are allocated with a bias: less elbow room
+     * around the context_rect (square of data needed by the sampler)
+     * is put at the left and top than at the right and bottom. (Such
+     * asymetrical elbow room is beneficial when resizing, for
+     * example, since input space is then traversed from left to right
+     * and top to bottom, which means that the left and top elbow room
+     * is not used in this situation.) When the affine transformation
+     * "flips" things, however, the elbow room is "on the wrong side",
+     * and for this reason such transformations run much much slower
+     * because many more input buffer tiles get created. One way to
+     * make things better is to traverse the output buffer tile in an
+     * appropriate chosen "reverse order" so that the "short" elbow
+     * room is "behind" instead of "ahead".
+     *
+     * Things are actually a bit more complicated than that. Here is a
+     * terse description of what's actually done, without a full
+     * explanation of why.
+     *
+     * Let's consider a scanline of the output tile which we want to
+     * fill. Pull this scanline back to input space. Assume that we
+     * are using a freshly created input tile. What direction would
+     * maximize the number of pulled back input pixels that we can fit
+     * in the input tile? Because the input tile is square and most of
+     * the extra elbow room is at the bottom and right, the "best"
+     * direction is going down the diagonal of the square,
+     * approximately from top left to bottom right of the tile.
+     *
+     * Of course, we do not have control over the actual line traced
+     * by the output scanline in input space. But what the above tells
+     * us is that if the inner product of the pulled back "scanline
+     * vector" with the vector (1,1) (which corresponds to going
+     * diagonally from top-left to bottom-right in a square tile) is
+     * negative, we are going opposite to "best". This can be
+     * rectified by filling the output scanline in reverse order: from
+     * right to left in output space.
+     *
+     * Similarly, when one computes the next scanline, one can ask
+     * whether it's the one above or below in output space which is
+     * most likely to "stick out". Repeating the same argument used
+     * for a single scanline, we see that the sign of the inner
+     * product of the inverse image of the vector that points straight
+     * down in output space with the input space vector (1,1) tells us
+     * whether we should fill the output tile from the top down or
+     * from the bottom up.
+     *
+     * Making the "best" happen requires stepping in the "right
+     * direction" both w.r.t. to data pointers and geometrical steps.
+     * In the following code, adjusting the "geometrical steps" so they
+     * go in the right direction is done by modifying the inverse
+     * Jacobian matrix to minimize the number of "geometrical
+     * quantities" floating around. It could be done leaving the
+     * Jacobian matrix alone.
+     */
 
-  if (inverse.coeff [0][1] + inverse.coeff [1][1] < (gdouble) 0.0)
-    {
-      /*
-       * Flip the vertical scan component of the inverse jacobian:
-       */
-      inverse_jacobian.coeff [0][1] = -inverse.coeff [0][1];
-      inverse_jacobian.coeff [1][1] = -inverse.coeff [1][1];
-      /*
-       * Set the flag.
-       */
-      flip_y = (gint) 1;
-    }
+    /*
+     * Set the inverse_jacobian matrix (a.k.a. scale) for samplers
+     * that support it. The inverse jacobian will be "flipped" if the
+     * direction in which the ROI is filled is flipped. Flipping the
+     * inverse jacobian is not necessary for the samplers' sake, but
+     * it makes the following code shorter. Anyway, "sane" use of the
+     * inverse jacobian by a sampler only cares for its effect on
+     * sets: only the image of a centered square with sides aligned
+     * with the coordinate axes, or a centered disc, matters,
+     * irrespective of orientation ("left-hand" VS "right-hand")
+     * issues.
+     */
+    const gint flip_x =
+      inverse.coeff [0][0] + inverse.coeff [1][0] < (gdouble) 0.
+      ?
+      (gint) 1
+      :
+      (gint) 0;
+    const gint flip_y =
+      inverse.coeff [0][1] + inverse.coeff [1][1] < (gdouble) 0.
+      ?
+      (gint) 1
+      :
+      (gint) 0;
 
-  /*
-   * Hoist most of what can be out of the while loop:
-   */
-  base_u = inverse.coeff [0][0] * ((gdouble) 0.5 - flip_x) +
-           inverse.coeff [0][1] * ((gdouble) 0.5 - flip_y) +
-           inverse.coeff [0][2];
-  base_v = inverse.coeff [1][0] * ((gdouble) 0.5 - flip_x) +
-           inverse.coeff [1][1] * ((gdouble) 0.5 - flip_y) +
-           inverse.coeff [1][2];
+    /*
+     * Hoist most of what can out of the while loop:
+     */
+    const gdouble base_u = inverse.coeff [0][0] * ((gdouble) 0.5 - flip_x) +
+                           inverse.coeff [0][1] * ((gdouble) 0.5 - flip_y) +
+                           inverse.coeff [0][2];
+    const gdouble base_v = inverse.coeff [1][0] * ((gdouble) 0.5 - flip_x) +
+                           inverse.coeff [1][1] * ((gdouble) 0.5 - flip_y) +
+                           inverse.coeff [1][2];
 
-  while (gegl_buffer_iterator_next (i))
-    {
-      GeglRectangle *roi = &i->roi[0];
+    inverse_jacobian.coeff [0][0] =
+      flip_x ? -inverse.coeff [0][0] : inverse.coeff [0][0];
+    inverse_jacobian.coeff [1][0] =
+      flip_x ? -inverse.coeff [1][0] : inverse.coeff [1][0];
+    inverse_jacobian.coeff [0][1] =
+      flip_y ? -inverse.coeff [0][1] : inverse.coeff [0][1];
+    inverse_jacobian.coeff [1][1] =
+      flip_y ? -inverse.coeff [1][1] : inverse.coeff [1][1];
 
-      dest_buf = (gfloat *)i->data[0];
+    while (gegl_buffer_iterator_next (i))
+      {
+        GeglRectangle *roi = &i->roi[0];
+        gfloat * restrict dest_ptr =
+          (gfloat *)i->data[0] +
+          (gint) 4 * ( flip_x * (roi->width  - (gint) 1) +
+                       flip_y * (roi->height - (gint) 1) * roi->width );
 
-      u_start = base_u +
-                inverse.coeff [0][0] * ( roi->x + flip_x * roi->width  ) +
-                inverse.coeff [0][1] * ( roi->y + flip_y * roi->height );
-      v_start = base_v +
-                inverse.coeff [1][0] * ( roi->x + flip_x * roi->width  ) +
-                inverse.coeff [1][1] * ( roi->y + flip_y * roi->height );
+        gdouble u_start =
+          base_u +
+          inverse.coeff [0][0] * ( roi->x + flip_x * roi->width  ) +
+          inverse.coeff [0][1] * ( roi->y + flip_y * roi->height );
+        gdouble v_start =
+          base_v +
+          inverse.coeff [1][0] * ( roi->x + flip_x * roi->width  ) +
+          inverse.coeff [1][1] * ( roi->y + flip_y * roi->height );
 
-      dest_ptr = dest_buf +
-                 (gint) 4 * flip_x * (roi->width  - (gint) 1) +
-                 (gint) 4 * flip_y * (roi->height - (gint) 1) * roi->width;
+        gint y = roi->height;
+        do {
+          gdouble u_float = u_start;
+          gdouble v_float = v_start;
 
-      for (y = roi->height; y--;)
-        {
-          u_float = u_start;
-          v_float = v_start;
+          gint x = roi->width;
+          do {
+            gegl_sampler_get (sampler,
+                              u_float,
+                              v_float,
+                              &inverse_jacobian,
+                              dest_ptr,
+                              GEGL_ABYSS_NONE);
+            dest_ptr += (gint) 4 - (gint) 8 * flip_x;
 
-          for (x = roi->width; x--;)
-            {
-              gegl_sampler_get (sampler,
-                                u_float,
-                                v_float,
-                                &inverse_jacobian,
-                                dest_ptr,
-                                GEGL_ABYSS_NONE);
-
-              dest_ptr += (gint) 4 - (gint) 8 * flip_x;
-
-              u_float += inverse_jacobian.coeff [0][0];
-              v_float += inverse_jacobian.coeff [1][0];
-            }
+            u_float += inverse_jacobian.coeff [0][0];
+            v_float += inverse_jacobian.coeff [1][0];
+          } while (--x);
 
           dest_ptr += (gint) 8 * (flip_x - flip_y) * roi->width;
 
           u_start += inverse_jacobian.coeff [0][1];
           v_start += inverse_jacobian.coeff [1][1];
-        }
-    }
+        } while (--y);
+      }
+  }
 }
 
 static void
@@ -1000,27 +921,18 @@ transform_generic (GeglBuffer  *dest,
                    GeglSampler *sampler,
                    gint         level)
 {
+  const Babl          *format = babl_format ("RaGaBaA float");
   GeglBufferIterator  *i;
   const GeglRectangle *dest_extent;
-  gint                 x,
-                       y;
-  gfloat * restrict    dest_buf,
-                      *dest_ptr;
   GeglMatrix3          inverse;
-  gdouble              u_start,
-                       v_start,
-                       w_start,
-                       u_float,
-                       v_float,
-                       w_float;
-  const Babl          *format = babl_format ("RaGaBaA float");
-  gint                 dest_pixels,
-                       flip_x = 1,
-                       flip_y = 1;
+  gint                 dest_pixels;
 
   g_object_get (dest, "pixels", &dest_pixels, NULL);
   dest_extent = gegl_buffer_get_extent (dest);
 
+  /*
+   * Construct an output tile iterator.
+   */
   i = gegl_buffer_iterator_new (dest,
                                 dest_extent,
                                 level,
@@ -1031,132 +943,141 @@ transform_generic (GeglBuffer  *dest,
   gegl_matrix3_copy_into (&inverse, matrix);
   gegl_matrix3_invert (&inverse);
 
+  /*
+   * Fill the output tiles.
+   */
   while (gegl_buffer_iterator_next (i))
     {
-      GeglRectangle *roi = &i->roi[0];
-
-      dest_buf = (gfloat *)i->data[0];
-
-      dest_ptr = dest_buf;
-
+      GeglRectangle *roi         = &i->roi[0];
       /*
        * This code uses a variant of the (novel?) method of ensuring
        * that scanlines stay, as much as possible, within an input
-       * "tile", given that these square "tiles" are biased so that
-       * there is more elbow room at the bottom and right than at the
-       * top and left, explained in the transform_affine function. It
-       * is not as foolproof because perspective transformations
-       * change the orientation of scanlines, and consequently what's
-       * good at the bottom may not be best at the top. On the other
-       * hand, the ROIs are generally small, so it's likely that
-       * what's good for the goose is good for the gander.
+       * "tile", given that these wider than tall "tiles" are biased
+       * so that there is more elbow room at the bottom and right than
+       * at the top and left, explained in the transform_affine
+       * function. It is not as foolproof because perspective
+       * transformations change the orientation of scanlines, and
+       * consequently what's good at the bottom may not be best at the
+       * top.
        */
       /*
-       * Find out if we should flip things in the vertical
-       * direction. Flipping in the horizontal direction at the end
-       * ensures that the very first filled scanline will be done in
-       * the optimal order, even though the last one may not be. So,
-       * "fixing" the horizontal direction last can be seen as a form
-       * of greediness.
+       * Determine whether tile access should be "flipped". First, in
+       * the y direction, because this is the one we can afford most
+       * not to get right.
        */
-      /*
-       * Compute the positions of the pre-images of the top left and
-       * bottom left pixels of the ROI.
-       */
-      u_start = inverse.coeff [0][0] * (roi->x + (gdouble) 0.5) +
-                inverse.coeff [0][1] * (roi->y + (gdouble) 0.5) +
-                inverse.coeff [0][2];
-      v_start = inverse.coeff [1][0] * (roi->x + (gdouble) 0.5)  +
-                inverse.coeff [1][1] * (roi->y + (gdouble) 0.5)  +
-                inverse.coeff [1][2];
-      w_start = inverse.coeff [2][0] * (roi->x + (gdouble) 0.5)  +
-                inverse.coeff [2][1] * (roi->y + (gdouble) 0.5)  +
-                inverse.coeff [2][2];
-      u_float = u_start + inverse.coeff [0][1] * (roi->height - (gint) 1);
-      v_float = v_start + inverse.coeff [1][1] * (roi->height - (gint) 1);
-      w_float = w_start + inverse.coeff [2][1] * (roi->height - (gint) 1);
+      const gdouble u_start_y =
+        inverse.coeff [0][0] * (roi->x + (gdouble) 0.5) +
+        inverse.coeff [0][1] * (roi->y + (gdouble) 0.5) +
+        inverse.coeff [0][2];
+      const gdouble v_start_y =
+        inverse.coeff [1][0] * (roi->x + (gdouble) 0.5) +
+        inverse.coeff [1][1] * (roi->y + (gdouble) 0.5) +
+        inverse.coeff [1][2];
+      const gdouble w_start_y =
+        inverse.coeff [2][0] * (roi->x + (gdouble) 0.5) +
+        inverse.coeff [2][1] * (roi->y + (gdouble) 0.5) +
+        inverse.coeff [2][2];
 
-      if ((u_float + v_float)/w_float < (u_start + v_start)/w_start)
-        {
-          /*
-           * Set the "change of direction" sign.
-           */
-          flip_y = (gint) -1;
-          /*
-           * Move the start to the previously last scanline.
-           */
-          dest_ptr += (gint) 4 * (roi->height - (gint) 1) * roi->width;
-          u_start = u_float;
-          v_start = v_float;
-          w_start = w_float;
-        }
+      const gdouble u_float_y =
+        u_start_y + inverse.coeff [0][1] * (roi->height - (gint) 1);
+      const gdouble v_float_y =
+        v_start_y + inverse.coeff [1][1] * (roi->height - (gint) 1);
+      const gdouble w_float_y =
+        w_start_y + inverse.coeff [2][1] * (roi->height - (gint) 1);
 
       /*
-       * Repeat in the horizontal direction, using the first scanline
-       * selected by the vertical flip.
+       * Check whether the next scanline is likely to fall within the
+       * biased tile.
        */
-      u_float = u_start + inverse.coeff [0][0] * (roi->width  - (gint) 1);
-      v_float = v_start + inverse.coeff [1][0] * (roi->width  - (gint) 1);
-      w_float = w_start + inverse.coeff [2][0] * (roi->width  - (gint) 1);
+      const gint bflip_y =
+        (u_float_y+v_float_y)/w_float_y < (u_start_y+v_start_y)/w_start_y
+        ?
+        (gint) 1
+        :
+        (gint) 0;
 
-      if ((u_float + v_float)/w_float < (u_start + v_start)/w_start)
-        {
-          flip_x = (gint) -1;
-          /*
-           * Move the start to the previously last pixel of the
-           * scanline.
-           */
-          dest_ptr += (gint) 4 * (roi->width  - (gint) 1);
-          u_start = u_float;
-          v_start = v_float;
-          w_start = w_float;
-        }
+      /*
+       * Determine whether to flip in the horizontal direction. Done
+       * last because this is the most important one, and consequently
+       * we want to use the likely "initial scanline" to at least get
+       * that one about right.
+       */
+      const gdouble u_start_x = bflip_y ? u_float_y : u_start_y;
+      const gdouble v_start_x = bflip_y ? v_float_y : v_start_y;
+      const gdouble w_start_x = bflip_y ? w_float_y : w_start_y;
 
-      for (y = roi->height; y--;)
-        {
-          u_float = u_start;
-          v_float = v_start;
-          w_float = w_start;
+      const gdouble u_float_x =
+        u_start_x + inverse.coeff [0][0] * (roi->width - (gint) 1);
+      const gdouble v_float_x =
+        v_start_x + inverse.coeff [1][0] * (roi->width - (gint) 1);
+      const gdouble w_float_x =
+        w_start_x + inverse.coeff [2][0] * (roi->width - (gint) 1);
 
-          for (x = roi->width; x--;)
-            {
-              GeglMatrix2 inverse_jacobian;
+      const gint bflip_x =
+        (u_float_x + v_float_x)/w_float_x < (u_start_x + v_start_x)/w_start_x
+        ?
+        (gint) 1
+        :
+        (gint) 0;
 
-              gdouble w_recip = 1.0 / w_float;
-              gdouble u = u_float * w_recip;
-              gdouble v = v_float * w_recip;
+      gfloat * restrict dest_ptr =
+        (gfloat *)i->data[0] +
+        (gint) 4 * ( bflip_x * (roi->width  - (gint) 1) +
+                     bflip_y * (roi->height - (gint) 1) * roi->width );
 
-              inverse_jacobian.coeff [0][0] =
-                (inverse.coeff [0][0] - inverse.coeff [2][0] * u) * w_recip;
-              inverse_jacobian.coeff [0][1] =
-                (inverse.coeff [0][1] - inverse.coeff [2][1] * u) * w_recip;
-              inverse_jacobian.coeff [1][0] =
-                (inverse.coeff [1][0] - inverse.coeff [2][0] * v) * w_recip;
-              inverse_jacobian.coeff [1][1] =
-                (inverse.coeff [1][1] - inverse.coeff [2][1] * v) * w_recip;
+      gdouble u_start = bflip_x ? u_float_x : u_start_x;
+      gdouble v_start = bflip_x ? v_float_x : v_start_x;
+      gdouble w_start = bflip_x ? w_float_x : w_start_x;
 
-              gegl_sampler_get (sampler,
-                                u,
-                                v,
-                                &inverse_jacobian,
-                                dest_ptr,
-                                GEGL_ABYSS_NONE);
+      const gint flip_x = (gint) 1 - (gint) 2 * bflip_x;
+      const gint flip_y = (gint) 1 - (gint) 2 * bflip_y;
 
-              dest_ptr += flip_x * (gint) 4;
+      /*
+       * Assumes that height and width are > 0.
+       */
+      gint y = roi->height;
+      do {
+        gdouble u_float = u_start;
+        gdouble v_float = v_start;
+        gdouble w_float = w_start;
 
-              u_float += flip_x * inverse.coeff [0][0];
-              v_float += flip_x * inverse.coeff [1][0];
-              w_float += flip_x * inverse.coeff [2][0];
-            }
+        gint x = roi->width;
+        do {
+          gdouble w_recip = (gdouble) 1.0 / w_float;
+          gdouble u = u_float * w_recip;
+          gdouble v = v_float * w_recip;
 
-          dest_ptr += (gint) 4 * (flip_y - flip_x) * roi->width;
+          GeglMatrix2 inverse_jacobian;
+          inverse_jacobian.coeff [0][0] =
+            (inverse.coeff [0][0] - inverse.coeff [2][0] * u) * w_recip;
+          inverse_jacobian.coeff [0][1] =
+            (inverse.coeff [0][1] - inverse.coeff [2][1] * u) * w_recip;
+          inverse_jacobian.coeff [1][0] =
+            (inverse.coeff [1][0] - inverse.coeff [2][0] * v) * w_recip;
+          inverse_jacobian.coeff [1][1] =
+            (inverse.coeff [1][1] - inverse.coeff [2][1] * v) * w_recip;
 
-          u_start += flip_y * inverse.coeff [0][1];
-          v_start += flip_y * inverse.coeff [1][1];
-          w_start += flip_y * inverse.coeff [2][1];
-        }
+          gegl_sampler_get (sampler,
+                            u,
+                            v,
+                            &inverse_jacobian,
+                            dest_ptr,
+                            GEGL_ABYSS_NONE);
+
+          dest_ptr += flip_x * (gint) 4;
+          u_float += flip_x * inverse.coeff [0][0];
+          v_float += flip_x * inverse.coeff [1][0];
+          w_float += flip_x * inverse.coeff [2][0];
+        } while (--x);
+
+        dest_ptr += (gint) 4 * (flip_y - flip_x) * roi->width;
+        u_start += flip_y * inverse.coeff [0][1];
+        v_start += flip_y * inverse.coeff [1][1];
+        w_start += flip_y * inverse.coeff [2][1];
+      } while (--y);
     }
 }
+
 
 /*
  * Use to determine if key transform matrix coefficients are close
@@ -1273,8 +1194,10 @@ gegl_transform_process (GeglOperation        *operation,
       input  = gegl_operation_context_get_source (context, "input");
       output = gegl_operation_context_get_target (context, "output");
 
-      sampler = gegl_buffer_sampler_new (input, babl_format("RaGaBaA float"),
-          gegl_sampler_type_from_string (transform->filter));
+      sampler =
+        gegl_buffer_sampler_new (input,
+                                 babl_format("RaGaBaA float"),
+                             gegl_sampler_type_from_string (transform->filter));
 
       if (gegl_matrix3_is_affine (&matrix))
         transform_affine  (output, input, &matrix, sampler, context->level);

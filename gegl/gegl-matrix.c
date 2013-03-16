@@ -211,16 +211,16 @@ gegl_matrix3_originate (GeglMatrix3 *matrix,
 }
 
 void
-gegl_matrix3_transform_point (GeglMatrix3  *matrix,
+gegl_matrix3_transform_point (GeglMatrix3 *matrix,
                               gdouble     *x,
                               gdouble     *y)
 {
-  gdouble xp, yp, w;
+  gdouble xp, yp, w, cw;
   
   w = (*x * matrix->coeff [2][0] + *y * matrix->coeff [2][1] + matrix->coeff [2][2]);
 
-  xp = (*x * matrix->coeff [0][0] + *y * matrix->coeff [0][1] + matrix->coeff [0][2]) /w;
-  yp = (*x * matrix->coeff [1][0] + *y * matrix->coeff [1][1] + matrix->coeff [1][2]) /w;
+  xp = (*x * matrix->coeff [0][0] + *y * matrix->coeff [0][1] + matrix->coeff [0][2]) / w;
+  yp = (*x * matrix->coeff [1][0] + *y * matrix->coeff [1][1] + matrix->coeff [1][2]) / w;
 
   *x = xp;
   *y = yp;

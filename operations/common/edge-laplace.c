@@ -452,9 +452,6 @@ cl_edge_laplace (cl_mem                in_tex,
                                        0, NULL, NULL);
   if (cl_err != CL_SUCCESS) return cl_err;
 
-  cl_err = gegl_clEnqueueBarrier(gegl_cl_get_command_queue());
-  if (CL_SUCCESS != cl_err) return cl_err;
-
   cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 0, sizeof(cl_mem),   (void*)&aux_tex);
   cl_err |= gegl_clSetKernelArg(cl_data->kernel[1], 1, sizeof(cl_mem),   (void*)&out_tex);
   if (cl_err != CL_SUCCESS) return cl_err;
@@ -481,7 +478,7 @@ cl_process (GeglOperation       *operation,
 
   GeglOperationAreaFilter *op_area = GEGL_OPERATION_AREA_FILTER (operation);
 
-  GeglBufferClIterator *i = gegl_buffer_cl_iterator_new (output,   result, out_format, GEGL_CL_BUFFER_WRITE, GEGL_ABYSS_NONE);
+  GeglBufferClIterator *i = gegl_buffer_cl_iterator_new (output,   result, out_format, GEGL_CL_BUFFER_WRITE);
   gint read = gegl_buffer_cl_iterator_add_2 (i, input, result, in_format,  GEGL_CL_BUFFER_READ, op_area->left, op_area->right, op_area->top, op_area->bottom, GEGL_ABYSS_NONE);
   gint aux  = gegl_buffer_cl_iterator_add_2 (i, NULL, result, in_format,  GEGL_CL_BUFFER_AUX, op_area->left, op_area->right, op_area->top, op_area->bottom, GEGL_ABYSS_NONE);
   while (gegl_buffer_cl_iterator_next (i, &err))

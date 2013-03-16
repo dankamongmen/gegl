@@ -138,6 +138,12 @@ gegl_cl_is_accelerated (void)
   return cl_state.is_accelerated && gegl_config()->use_opencl;
 }
 
+void
+gegl_cl_disable (void)
+{
+  cl_state.is_accelerated = FALSE;
+}
+
 cl_platform_id
 gegl_cl_get_platform (void)
 {
@@ -263,6 +269,7 @@ gegl_cl_init (GError **error)
       CL_LOAD_FUNCTION (clEnqueueWriteBufferRect)
       CL_LOAD_FUNCTION (clEnqueueCopyBufferRect)
       CL_LOAD_FUNCTION (clCreateImage2D)
+      CL_LOAD_FUNCTION (clCreateImage3D)
       CL_LOAD_FUNCTION (clEnqueueWriteImage)
       CL_LOAD_FUNCTION (clEnqueueReadImage)
       CL_LOAD_FUNCTION (clEnqueueCopyImage)
@@ -296,6 +303,7 @@ gegl_cl_init (GError **error)
       err = gegl_clGetDeviceIDs (cl_state.platform, CL_DEVICE_TYPE_DEFAULT, 1, &cl_state.device, NULL);
       if(err != CL_SUCCESS)
         {
+          GEGL_NOTE (GEGL_DEBUG_OPENCL, "Error: %s", gegl_cl_errstring(err));
           GEGL_NOTE (GEGL_DEBUG_OPENCL, "Could not create device");
           return FALSE;
         }
