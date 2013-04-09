@@ -123,6 +123,11 @@ void              gegl_buffer_get_unlocked (GeglBuffer          *buffer,
                                             gint                 rowstride,
                                             GeglAbyssPolicy      repeat_mode);
 
+void              gegl_buffer_copy2        (GeglBuffer          *src,
+                                            const GeglRectangle *src_rect,
+                                            GeglBuffer          *dst,
+                                            const GeglRectangle *dst_rect);
+
 GeglBuffer *
 gegl_buffer_new_ram (const GeglRectangle *extent,
                      const Babl          *format);
@@ -164,6 +169,7 @@ struct _GeglTile
   gchar            lock;        /* number of times the tile is write locked
                                  * should in theory just have the values 0/1
                                  */
+  gint             is_zero_tile:1;
 
   /* the shared list is a doubly linked circular list */
   GeglTile        *next_shared;

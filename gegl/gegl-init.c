@@ -92,6 +92,7 @@ guint gegl_debug_flags = 0;
 #include "operation/gegl-operations.h"
 #include "operation/gegl-extension-handler.h"
 #include "buffer/gegl-buffer-private.h"
+#include "buffer/gegl-buffer-iterator-private.h"
 #include "buffer/gegl-tile-backend-ram.h"
 #include "buffer/gegl-tile-backend-tiledir.h"
 #include "buffer/gegl-tile-backend-file.h"
@@ -164,6 +165,32 @@ static glong         global_time = 0;
 static const gchar *makefile (void);
 
 static void
+gegl_config_use_opencl_notify (GObject    *gobject,
+                               GParamSpec *pspec,
+                               gpointer    user_data)
+{
+  GeglConfig *cfg = GEGL_CONFIG (gobject);
+  gboolean use_opencl = cfg->use_opencl;
+
+  if (use_opencl)
+  {
+    g_signal_handlers_block_by_func (gobject,
+                                     gegl_config_use_opencl_notify,
+                                     NULL);
+
+    use_opencl = gegl_cl_init (NULL);
+
+    g_object_set (gobject,
+                  "use-opencl", use_opencl,
+                  NULL);
+
+    g_signal_handlers_unblock_by_func (gobject,
+                                       gegl_config_use_opencl_notify,
+                                       NULL);
+  }
+}
+
+static void
 gegl_init_i18n (void)
 {
   setlocale (LC_ALL, "");
@@ -177,8 +204,12 @@ gegl_init (gint    *argc,
 {
   GOptionContext *context;
   GError         *error = NULL;
-  if (config)
+  static gboolean initialized = FALSE;
+
+  if (initialized)
     return;
+
+  initialized = TRUE;
 
   gegl_init_i18n ();
 
@@ -351,8 +382,6 @@ static void swap_clean (void)
     }
 }
 
-void gegl_tile_storage_cache_cleanup (void);
-
 void
 gegl_exit (void)
 {
@@ -366,10 +395,10 @@ gegl_exit (void)
 
   timing = gegl_ticks ();
 
-  gegl_tile_storage_cache_cleanup ();
   gegl_tile_cache_destroy ();
   gegl_operation_gtype_cleanup ();
   gegl_extension_handler_cleanup ();
+  _gegl_buffer_iterator_cleanup ();
 
   if (module_db != NULL)
     {
@@ -471,10 +500,6 @@ gegl_post_parse_hook (GOptionContext *context,
                       GError        **error)
 {
   glong time;
-
-  if (config)
-    return TRUE;
-
 
   g_assert (global_time == 0);
   global_time = gegl_ticks ();
@@ -601,6 +626,12 @@ gegl_post_parse_hook (GOptionContext *context,
     }
 
   swap_clean ();
+
+  g_signal_connect (G_OBJECT (config),
+                   "notify::use-opencl",
+                   G_CALLBACK (gegl_config_use_opencl_notify),
+                   NULL);
+  g_object_set (config, "use-opencl", config->use_opencl, NULL);
 
   return TRUE;
 }

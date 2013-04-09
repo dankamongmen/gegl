@@ -28,6 +28,7 @@
 #include "gegl-types-internal.h"
 #include "gegl-buffer-types.h"
 #include "gegl-buffer-iterator.h"
+#include "gegl-buffer-iterator-private.h"
 #include "gegl-buffer-private.h"
 #include "gegl-tile-storage.h"
 #include "gegl-utils.h"
@@ -141,7 +142,7 @@ static void gegl_buffer_tile_iterator_init (GeglBufferTileIterator *i,
   i->max_size = i->buffer->tile_storage->tile_width *
                 i->buffer->tile_storage->tile_height;
 
-  i->same_format = format == buffer->format;
+  i->same_format = format == buffer->soft_format;
 
   /* return at the end,. we still want things initialized a bit .. */
   g_return_if_fail (roi.width != 0 && roi.height != 0);
@@ -322,10 +323,6 @@ gegl_buffer_iterator_add (GeglBufferIterator  *iterator,
   return self;
 }
 
-/* FIXME: we are currently leaking this buf pool, it should be
- * freed when gegl is uninitialized
- */
-
 typedef struct BufInfo {
   gint     size;
   gint     used;  /* if this buffer is currently allocated */
@@ -379,6 +376,25 @@ static void iterator_buf_pool_release (gpointer buf)
         }
     }
   g_assert (0);
+  g_mutex_unlock (&pool_mutex);
+}
+
+void
+_gegl_buffer_iterator_cleanup (void)
+{
+  gint i;
+  /* FIXME: is the mutex lock necessary? */
+  g_mutex_lock (&pool_mutex);
+  if (buf_pool)
+    {
+      for (i=0; i<buf_pool->len; i++)
+        {
+          BufInfo *info = &g_array_index (buf_pool, BufInfo, i);
+          gegl_free (info->buf);
+        }
+      g_array_free (buf_pool, TRUE);
+      buf_pool = NULL;
+    }
   g_mutex_unlock (&pool_mutex);
 }
 

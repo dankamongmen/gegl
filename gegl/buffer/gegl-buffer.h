@@ -33,6 +33,9 @@ G_BEGIN_DECLS
 typedef struct _GeglBuffer   GeglBuffer;
 typedef struct _GeglSampler  GeglSampler;
 #endif
+#ifndef __GEGL_BUFFER_BACKEND_H__
+typedef struct _GeglTileBackend GeglTileBackend;
+#endif
 
 /***
  * GeglBuffer:
@@ -61,7 +64,24 @@ GType           gegl_buffer_get_type          (void) G_GNUC_CONST;
 GeglBuffer *    gegl_buffer_new               (const GeglRectangle *extent,
                                                const Babl          *format);
 
-
+/**
+ * gegl_buffer_introspectable_new:
+ * @format_name: The Babl format name for this buffer, e.g. "RGBA float"
+ * @x: x origin of the buffer's extent
+ * @y: y origin of the buffer's extent
+ * @width: width of the buffer's extent
+ * @height: height of the buffer's extent
+ *
+ * Create a new GeglBuffer with the given format and dimensions.
+ *
+ * Rename to: gegl_buffer_new
+ */
+GeglBuffer *
+gegl_buffer_introspectable_new (const char *format_name,
+                                gint x,
+                                gint y,
+                                gint width,
+                                gint height);
 
 /**
  * gegl_buffer_new_for_backend:
@@ -75,7 +95,7 @@ GeglBuffer *    gegl_buffer_new               (const GeglRectangle *extent,
  * returns a GeglBuffer, that holds a reference to the provided backend.
  */
 GeglBuffer *   gegl_buffer_new_for_backend    (const GeglRectangle *extent,
-                                               void                *backend);
+                                               GeglTileBackend     *backend);
 
 /**
  * gegl_buffer_add_handler:
@@ -105,13 +125,13 @@ void           gegl_buffer_remove_handler     (GeglBuffer          *buffer,
  * state so multiple instances of gegl can share the same buffer. Sets on
  * one buffer are reflected in the other.
  *
- * Returns: a GeglBuffer object.
+ * Returns: (transfer full): a GeglBuffer object.
  */
 GeglBuffer *    gegl_buffer_open              (const gchar         *path);
 
 /**
  * gegl_buffer_save:
- * @buffer: a #GeglBuffer.
+ * @buffer: (transfer none): a #GeglBuffer.
  * @path: the path where the gegl buffer will be saved, any writable GIO uri is valid.
  * @roi: the region of interest to write, this is the tiles that will be collected and
  * written to disk.
@@ -130,7 +150,7 @@ void            gegl_buffer_save              (GeglBuffer          *buffer,
  * gegl_buffer_save it should be possible to open through any GIO transport, buffers
  * that have been used as swap needs random access to be opened.
  *
- * Returns: a #GeglBuffer object.
+ * Returns: (transfer full): a #GeglBuffer object.
  */
 GeglBuffer *     gegl_buffer_load             (const gchar         *path);
 
@@ -146,10 +166,12 @@ void            gegl_buffer_flush             (GeglBuffer          *buffer);
 
 /**
  * gegl_buffer_create_sub_buffer:
- * @buffer: parent buffer.
- * @extent: coordinates of new buffer.
+ * @buffer: (transfer none): parent buffer.
+ * @extent: (transfer none): coordinates of new buffer.
  *
  * Create a new sub GeglBuffer, that is a view on a larger buffer.
+ *
+ * Return value: (transfer full): the new sub buffer
  */
 GeglBuffer *    gegl_buffer_create_sub_buffer (GeglBuffer          *buffer,
                                                const GeglRectangle *extent);
@@ -365,17 +387,16 @@ void            gegl_buffer_clear             (GeglBuffer          *buffer,
 
 /**
  * gegl_buffer_copy:
- * @src: source buffer.
+ * @src: (transfer none): source buffer.
  * @src_rect: source rectangle (or NULL to copy entire source buffer)
- * @dst: destination buffer.
+ * @dst: (transfer none): destination buffer.
  * @dst_rect: position of upper left destination pixel, or NULL for top
  * left coordinates of the buffer extents.
  *
  * copies a region from source buffer to destination buffer.
  *
  * If the babl_formats of the buffers are the same, and the tile boundaries
- * align, this should optimally lead to shared tiles that are copy on write,
- * this functionality is not implemented yet.
+ * align, this will create copy-on-write tiles in the destination buffer.
  */
 void            gegl_buffer_copy              (GeglBuffer          *src,
                                                const GeglRectangle *src_rect,
@@ -385,11 +406,12 @@ void            gegl_buffer_copy              (GeglBuffer          *src,
 
 /**
  * gegl_buffer_dup:
- * @buffer: the GeglBuffer to duplicate.
+ * @buffer: (transfer none): the GeglBuffer to duplicate.
  *
- * duplicate a buffer (internally uses gegl_buffer_copy), this should ideally
- * lead to a buffer that shares the raster data with the original on a tile
- * by tile COW basis. This is not yet implemented
+ * Duplicate a buffer (internally uses gegl_buffer_copy). Aligned tiles
+ * will create copy-on-write clones in the new buffer.
+ *
+ * Return value: (transfer full): the new buffer
  */
 GeglBuffer *    gegl_buffer_dup               (GeglBuffer       *buffer);
 
@@ -461,6 +483,9 @@ GeglSamplerType gegl_sampler_type_from_string (const gchar *string);
  *
  * Create a new sampler, when you are done with the sampler, g_object_unref
  * it.
+ *
+ * Samplers only hold weak references to buffers, so if its buffer is freed
+ * the sampler will become invalid.
  */
 GeglSampler *    gegl_buffer_sampler_new      (GeglBuffer       *buffer,
                                                const Babl       *format,

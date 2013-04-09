@@ -40,7 +40,7 @@ m4_define([gimp_full_name], [Generic Graphical Library])
 m4_define([babl_required_version], [0.1.10])
 m4_define([cairo_required_version], [0.0.0])
 m4_define([gdk_pixbuf_required_version], [2.18.0])
-m4_define([glib_required_version], [2.32.4])
+m4_define([glib_required_version], [2.32.3])
 m4_define([graphviz_required_version], [0.0.0])
 m4_define([jasper_required_version], [1.900.1])
 m4_define([lensfun_required_version], [0.2.5])
@@ -401,6 +401,7 @@ GOBJECT_INTROSPECTION_CHECK([0.10.0])
 ########################
 have_pygobject="no"
 PKG_CHECK_EXISTS(pygobject-2.0 >= 2.26, have_pygobject="yes")
+PKG_CHECK_EXISTS(pygobject-3.0 >= 3.2, have_pygobject="yes")
 AM_CONDITIONAL(HAVE_PYGOBJECT, test "$have_pygobject" = "yes")
 
 ########################

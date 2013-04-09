@@ -106,14 +106,8 @@ enum {
   LAST_SIGNAL
 };
 
-static GeglBuffer *gegl_buffer_new_from_format     (const void *babl_fmt,
-                                                    gint        x,
-                                                    gint        y,
-                                                    gint        width,
-                                                    gint        height,
-                                                    gint        tile_width,
-                                                    gint        tile_height,
-                                                    gboolean    use_ram);
+static char * get_next_swap_path (void);
+
 static const void *gegl_buffer_internal_get_format (GeglBuffer *buffer);
 
 
@@ -215,6 +209,22 @@ gegl_buffer_get_property (GObject    *gobject,
 
       case PROP_SHIFT_Y:
         g_value_set_int (value, buffer->shift_y);
+        break;
+
+      case PROP_ABYSS_X:
+        g_value_set_int (value, buffer->abyss.x);
+        break;
+
+      case PROP_ABYSS_Y:
+        g_value_set_int (value, buffer->abyss.y);
+        break;
+
+      case PROP_ABYSS_WIDTH:
+        g_value_set_int (value, buffer->abyss.width);
+        break;
+
+      case PROP_ABYSS_HEIGHT:
+        g_value_set_int (value, buffer->abyss.height);
         break;
 
       default:
@@ -504,8 +514,6 @@ gegl_buffer_tile_storage (GeglBuffer *buffer)
   return (GeglTileStorage *) tmp;
 }
 
-void babl_backtrack (void);
-
 static void gegl_buffer_storage_changed (GeglTileStorage     *storage,
                                          const GeglRectangle *rect,
                                          gpointer             userdata)
@@ -524,22 +532,12 @@ gegl_buffer_constructor (GType                  type,
   GeglTileHandler *handler;
   GeglTileSource  *source;
 
-  gint width;
-  gint height;
-  gint x;
-  gint y;
-
   object = G_OBJECT_CLASS (parent_class)->constructor (type, n_params, params);
 
-  buffer    = GEGL_BUFFER (object);
-  handler   = GEGL_TILE_HANDLER (object);
+  buffer  = GEGL_BUFFER (object);
+  handler = GEGL_TILE_HANDLER (object);
   source  = handler->source;
-  backend   = gegl_buffer_backend (buffer);
-
-  x=buffer->extent.x;
-  y=buffer->extent.y;
-  width=buffer->extent.width;
-  height=buffer->extent.height;
+  backend = gegl_buffer_backend (buffer);
 
   if (source)
     {
@@ -550,128 +548,89 @@ gegl_buffer_constructor (GType                  type,
     }
   else
     {
-      /* if no source is specified if a format is specified, we
-       * we need to create our own
-       * source (this adds a redirection buffer in between for
-       * all "allocated from format", type buffers.
-       */
       if (buffer->backend)
         {
-          void *storage;
-
-          storage = gegl_tile_storage_new (buffer->backend);
-
-          source = g_object_new (GEGL_TYPE_BUFFER, "source", storage, NULL);
-          g_object_unref (storage);
-
-          gegl_tile_handler_set_source ((GeglTileHandler*)(buffer), source);
-          g_object_unref (source);
-
-          g_signal_connect (storage, "changed",
-                            G_CALLBACK (gegl_buffer_storage_changed),
-                            buffer);
-
-          g_assert (source);
-          backend = gegl_buffer_backend (GEGL_BUFFER (source));
-          g_assert (backend);
-          g_assert (backend == buffer->backend);
-        }
-      else if (buffer->path && g_str_equal (buffer->path, "RAM"))
-        {
-          source = GEGL_TILE_SOURCE (gegl_buffer_new_from_format (buffer->format,
-                                                             buffer->extent.x,
-                                                             buffer->extent.y,
-                                                             buffer->extent.width,
-                                                             buffer->extent.height,
-                                                             buffer->tile_width,
-                                                             buffer->tile_height, TRUE));
-          /* after construction,. x and y should be set to reflect
-           * the top level behavior exhibited by this buffer object.
-           */
-          gegl_tile_handler_set_source ((GeglTileHandler*)(buffer), source);
-          g_object_unref (source);
-
-          g_assert (source);
-          backend = gegl_buffer_backend (GEGL_BUFFER (source));
-          g_assert (backend);
-        }
-      else if (buffer->path)
-        {
-          GeglBufferHeader *header;
-          void             *storage;
-
-          backend = g_object_new (GEGL_TYPE_TILE_BACKEND_FILE,
-                                  "tile-width", 128,
-                                  "tile-height", 64,
-                                  "format", buffer->format?buffer->format:babl_format ("RGBA float"),
-                                  "path", buffer->path,
-                                  NULL);
-
-          storage = gegl_tile_storage_new (backend);
-          g_object_unref (backend);
-
-          source = g_object_new (GEGL_TYPE_BUFFER, "source", storage, NULL);
-          g_object_unref (storage);
-
-          /* after construction,. x and y should be set to reflect
-           * the top level behavior exhibited by this buffer object.
-           */
-          gegl_tile_handler_set_source ((GeglTileHandler*)(buffer), source);
-          g_object_unref (source);
-
-          g_signal_connect (storage, "changed",
-                            G_CALLBACK (gegl_buffer_storage_changed),
-                            buffer);
-
-          g_assert (source);
-          backend = gegl_buffer_backend (GEGL_BUFFER (source));
-          g_assert (backend);
-          header = backend->priv->header;
-          buffer->extent.x = header->x;
-          buffer->extent.y = header->y;
-          buffer->extent.width = header->width;
-          buffer->extent.height = header->height;
+          backend = buffer->backend;
           buffer->format = gegl_tile_backend_get_format (backend);
-        }
-      else if (buffer->format)
-        {
-          source = GEGL_TILE_SOURCE (gegl_buffer_new_from_format (buffer->format,
-                                                             buffer->extent.x,
-                                                             buffer->extent.y,
-                                                             buffer->extent.width,
-                                                             buffer->extent.height,
-                                                             buffer->tile_width,
-                                                             buffer->tile_height, FALSE));
-          /* after construction,. x and y should be set to reflect
-           * the top level behavior exhibited by this buffer object.
-           */
-          gegl_tile_handler_set_source ((GeglTileHandler*)(buffer), source);
-          g_object_unref (source);
-
-          g_assert (source);
-          backend = gegl_buffer_backend (GEGL_BUFFER (source));
-          g_assert (backend);
         }
       else
         {
-          g_warning ("not enough data to have a tile source for our buffer");
-        }
-        /* we reset the size if it seems to have been set to 0 during a on
-         * disk buffer creation, nasty but it does the job.
-         */
+          gboolean use_ram = FALSE;
+          const char *maybe_path = NULL;
 
-      if (buffer->extent.width == 0)
-        {
-          buffer->extent.width = width;
-          buffer->extent.height = height;
-          buffer->extent.x = x;
-          buffer->extent.y = y;
+          if (!buffer->format)
+            {
+              g_warning ("Buffer constructed without format, assuming RGBA float");
+              buffer->format = babl_format("RGBA float");
+            }
+
+          /* make a new backend & storage */
+
+          if (buffer->path)
+            maybe_path = buffer->path;
+          else
+            maybe_path = gegl_config ()->swap;
+
+          if (maybe_path)
+            use_ram = g_ascii_strcasecmp (maybe_path, "ram") == 0;
+          else
+            use_ram = TRUE;
+
+          if (use_ram == TRUE)
+            {
+              backend = g_object_new (GEGL_TYPE_TILE_BACKEND_RAM,
+                                      "tile-width", buffer->tile_width,
+                                      "tile-height", buffer->tile_height,
+                                      "format", buffer->format,
+                                      NULL);
+            }
+          else
+            {
+              if (buffer->path)
+                {
+                  backend = g_object_new (GEGL_TYPE_TILE_BACKEND_FILE,
+                                          "tile-width", buffer->tile_width,
+                                          "tile-height", buffer->tile_height,
+                                          "format", buffer->format,
+                                          "path", buffer->path,
+                                          NULL);
+                }
+              else
+                {
+                  gchar *path = get_next_swap_path();
+
+                  backend = g_object_new (GEGL_TYPE_TILE_BACKEND_FILE,
+                                          "tile-width", buffer->tile_width,
+                                          "tile-height", buffer->tile_height,
+                                          "format", buffer->format,
+                                          "path", path,
+                                          NULL);
+                  g_free (path);
+                }
+            }
+
+          buffer->backend = backend;
         }
+
+      source = GEGL_TILE_SOURCE (gegl_tile_storage_new (backend));
+      gegl_tile_handler_set_source ((GeglTileHandler*)(buffer), source);
+      g_object_unref (source);
+      g_object_unref (backend);
+    }
+
+   /* Connect to the changed signal of source, this is used by some backends
+    * (e.g. File) to notify of outside changes to the buffer.
+    */
+  if (GEGL_IS_TILE_STORAGE (source))
+    {
+      g_signal_connect (source, "changed",
+                        G_CALLBACK (gegl_buffer_storage_changed),
+                        buffer);
     }
 
   g_assert (backend);
 
-  if (buffer->extent.width == -1 &&
+  if (buffer->extent.width == -1 ||
       buffer->extent.height == -1) /* no specified extents,
                                       inheriting from source */
     {
@@ -688,6 +647,13 @@ gegl_buffer_constructor (GType                  type,
           buffer->extent.y = 0;
           buffer->extent.width  = GEGL_TILE_STORAGE (source)->width;
           buffer->extent.height = GEGL_TILE_STORAGE (source)->height;
+        }
+      else
+        {
+          buffer->extent.x = 0;
+          buffer->extent.y = 0;
+          buffer->extent.width  = 0;
+          buffer->extent.height = 0;
         }
     }
 
@@ -1050,6 +1016,29 @@ gegl_buffer_new_ram (const GeglRectangle *extent,
 }
 
 GeglBuffer *
+gegl_buffer_introspectable_new (const char *format_name,
+                                gint x,
+                                gint y,
+                                gint width,
+                                gint height)
+{
+  const Babl *format = NULL;
+
+  if (format_name)
+    format = babl_format (format_name);
+  if (!format)
+    format = babl_format ("RGBA float");
+
+  return g_object_new (GEGL_TYPE_BUFFER,
+                       "x", x,
+                       "y", y,
+                       "width", width,
+                       "height", height,
+                       "format", format,
+                       NULL);
+}
+
+GeglBuffer *
 gegl_buffer_new (const GeglRectangle *extent,
                  const Babl          *format)
 {
@@ -1072,7 +1061,7 @@ gegl_buffer_new (const GeglRectangle *extent,
 
 GeglBuffer *
 gegl_buffer_new_for_backend (const GeglRectangle *extent,
-                             void                *backend)
+                             GeglTileBackend     *backend)
 {
   GeglRectangle rect={0,0,0,0};
   const Babl *format;
@@ -1186,155 +1175,24 @@ gegl_buffer_create_sub_buffer (GeglBuffer          *buffer,
                        NULL);
 }
 
-
-typedef struct TileStorageCacheItem {
-  GeglTileStorage *storage;
-  gboolean         ram;
-  gint             tile_width;
-  gint             tile_height;
-  const void      *babl_fmt;
-} TileStorageCacheItem;
-
-static GMutex  storage_cache_mutex = { 0, };
-static GSList *storage_cache = NULL;
-
-/* returns TRUE if it could be done */
-gboolean gegl_tile_storage_cached_release (GeglTileStorage *storage);
-gboolean gegl_tile_storage_cached_release (GeglTileStorage *storage)
+static char *
+get_next_swap_path (void)
 {
-  TileStorageCacheItem *item = g_object_get_data (G_OBJECT (storage), "storage-cache-item");
+  static gint no = 1;
 
-  if (!item)
-    return FALSE;
-  g_mutex_lock (&storage_cache_mutex);
-  storage_cache = g_slist_prepend (storage_cache, item);
-  g_mutex_unlock (&storage_cache_mutex);
-  return TRUE;
-}
+  gchar *filename;
+  gchar *path;
+  gchar *swap_dir = gegl_config()->swap;
 
-void gegl_tile_storage_cache_cleanup (void);
-void gegl_tile_storage_cache_cleanup (void)
-{
-  g_mutex_lock (&storage_cache_mutex);
-  for (;storage_cache; storage_cache = g_slist_remove (storage_cache, storage_cache->data))
-    {
-      TileStorageCacheItem *item = storage_cache->data;
-      g_object_unref (item->storage);
-    }
-  g_mutex_unlock (&storage_cache_mutex);
-}
+  if (!swap_dir)
+    g_error("Attempted to build a file buffer with no path and no swap directory");
 
-static GeglTileStorage *
-gegl_tile_storage_new_cached (gint tile_width, gint tile_height,
-                              const void *babl_fmt, gboolean use_ram)
-{
-  GeglTileStorage *storage = NULL;
-  GSList *iter;
-  g_mutex_lock (&storage_cache_mutex);
-  for (iter = storage_cache; iter; iter = iter->next)
-    {
-      TileStorageCacheItem *item = iter->data;
-      if (item->babl_fmt == babl_fmt &&
-          item->tile_width == tile_width &&
-          item->tile_height == tile_height &&
-          item->ram == use_ram)
-       {
-         storage = item->storage;
-         storage_cache = g_slist_remove (storage_cache, item);
-         break;
-       }
-    }
+  filename = g_strdup_printf ("%i-%i", getpid(), no);
+  g_atomic_int_inc (&no);
+  path = g_build_filename (swap_dir, filename, NULL);
+  g_free (filename);
 
-  if (!storage)
-    {
-      TileStorageCacheItem *item = g_new0 (TileStorageCacheItem, 1);
-
-      item->tile_width = tile_width;
-      item->tile_height = tile_height;
-      item->babl_fmt = babl_fmt;
-
-      if (use_ram ||
-          !gegl_config()->swap ||
-          g_str_equal (gegl_config()->swap, "RAM") ||
-          g_str_equal (gegl_config()->swap, "ram"))
-        {
-          GeglTileBackend *backend;
-          item->ram = TRUE;
-          backend = g_object_new (GEGL_TYPE_TILE_BACKEND_RAM,
-                                  "tile-width", tile_width,
-                                  "tile-height", tile_height,
-                                  "format", babl_fmt,
-                                  NULL);
-          storage = gegl_tile_storage_new (backend);
-          g_object_unref (backend);
-        }
-      else
-        {
-          static gint no = 1;
-          GeglTileBackend *backend;
-
-          gchar *filename;
-          gchar *path;
-          item->ram = FALSE;
-
-#if 0
-          filename = g_strdup_printf ("GEGL-%i-%s-%i.swap",
-                                      getpid (),
-                                      babl_name ((Babl *) babl_fmt),
-                                      no++);
-#endif
-
-          filename = g_strdup_printf ("%i-%i", getpid(), no);
-          g_atomic_int_inc (&no);
-          path = g_build_filename (gegl_config()->swap, filename, NULL);
-          g_free (filename);
-
-          backend = g_object_new (GEGL_TYPE_TILE_BACKEND_FILE,
-                                  "tile-width", tile_width,
-                                  "tile-height", tile_height,
-                                  "format", babl_fmt,
-                                  "path", path,
-                                  NULL);
-          storage = gegl_tile_storage_new (backend);
-          g_object_unref (backend);
-          g_free (path);
-        }
-      item->storage = storage;
-      g_object_set_data_full (G_OBJECT (storage), "storage-cache-item", item, g_free);
-    }
-
-  g_mutex_unlock (&storage_cache_mutex);
-  return storage;
-}
-
-static GeglBuffer *
-gegl_buffer_new_from_format (const void *babl_fmt,
-                             gint        x,
-                             gint        y,
-                             gint        width,
-                             gint        height,
-                             gint        tile_width,
-                             gint        tile_height,
-                             gboolean    use_ram)
-{
-  GeglTileStorage *tile_storage;
-  GeglBuffer  *buffer;
-
-  tile_storage = gegl_tile_storage_new_cached (tile_width, tile_height, babl_fmt, use_ram);
-
-  buffer = g_object_new (GEGL_TYPE_BUFFER,
-                         "source",      tile_storage,
-                         "x",           x,
-                         "y",           y,
-                         "width",       width,
-                         "height",      height,
-                         "tile-width",  tile_width,
-                         "tile-height", tile_height,
-                         NULL);
-
-  g_object_unref (tile_storage);
-
-  return buffer;
+  return path;
 }
 
 static const void *gegl_buffer_internal_get_format (GeglBuffer *buffer)

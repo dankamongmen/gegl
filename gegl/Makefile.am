@@ -60,8 +60,8 @@ GEGL_introspectable_headers =	\
 GEGL_public_HEADERS = \
 	$(GEGL_introspectable_headers) \
     gegl-plugin.h			\
-    gegl-chant.h
-
+    gegl-chant.h      \
+    gegl-cpuaccel.h
 
 GEGL_introspectable_sources = \
 	gegl-c.c			\
@@ -96,7 +96,8 @@ GEGL_sources = \
 	$(GEGL_introspectable_sources) \
 	gegl-module.h			\
 	gegl-apply.h \
-	gegl-chant.h
+	gegl-chant.h \
+	gegl-cpuaccel-priv.h
 
 
 lib_LTLIBRARIES = libgegl-@GEGL_API_VERSION@.la
